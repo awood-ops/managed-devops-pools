@@ -1,0 +1,1168 @@
+name: ALZ-Bicep-1-AzDOAgents
+
+trigger:
+# YAML PR triggers are supported only in GitHub and Bitbucket Cloud.
+# If you use Azure Repos Git, you can configure a branch policy for build validation to trigger your build pipeline for validation.
+# https://learn.microsoft.com/en-us/azure/devops/repos/git/branch-policies#build-validation
+  branches:
+    include:
+      - "main"
+  paths:
+    include:
+      - "config/custom-parameters/resourceGroup.parameters.bicepparam"
+      - "config/custom-parameters/storageAccount.parameters.bicepparam"
+      - "config/custom-parameters/vmss.parameters.bicepparam"
+      - "config/custom-parameters/vNet.parameters.bicepparam"
+      - "config/custom-parameters/keyVault.parameters.bicepparam"
+      - "config/custom-parameters/nsg.parameters.bicepparam"
+      - "config/dev.env"
+      - "config/tst.env"
+      - "config/prd.env"
+
+
+pr:
+  branches:
+    include:
+      - "main"
+  paths:
+    include:
+      - "config/custom-parameters/resourceGroup.parameters.bicepparam"
+      - "config/custom-parameters/storageAccount.parameters.bicepparam"
+      - "config/custom-parameters/vmss.parameters.bicepparam"
+      - "config/custom-parameters/vNet.parameters.bicepparam"
+      - "config/custom-parameters/keyVault.parameters.bicepparam"
+      - "config/custom-parameters/nsg.parameters.bicepparam"
+      - "config/dev.env"
+      - "config/tst.env"
+      - "config/prd.env"
+
+      
+
+variables:
+- name: dev_env
+  value: "config/dev.env"
+- name: tst_env
+  value: "config/tst.env"
+- name: prd_env
+  value: "config/prd.env"
+- name: SERVICE_CONNECTION_NAME
+  value: ""
+- name: notification_email
+  value: ""
+- name: IS_PULL_REQUEST
+  value: "false"
+
+stages:
+  - stage: Deploy_Development
+    displayName: 'Deploy Development Environment'
+    jobs:
+    - job: GetEnvironmentParams_Dev
+      displayName: 'Get Development Environment Parameters'
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+      - checkout: self
+        displayName: Checkout Repo
+
+      - pwsh: |
+          Get-Content -Path ${{ variables.dev_env }} -Encoding UTF8 | ForEach-Object {
+            $envVarName, $envVarValue = $_.split('=').trim()
+            Write-Host "Setting $envVarName=$envVarValue"
+            Write-Host "##vso[task.setvariable variable=$envVarName;isoutput=true]$envVarValue"
+          }
+        name: setVars
+        displayName: Import Development Environment Variables from File
+
+    - deployment: DeployBaseInfrastructure
+      displayName: 'Deploy Base Infrastructure'
+      environment: 'development'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn: GetEnvironmentParams_Dev
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureCLI@2
+              displayName: 'Set Management Partner'
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                scriptType: 'bash'
+                scriptLocation: 'scriptPath'
+                scriptPath: 'pipeline-scripts/Set-AzManagementPartner.sh'
+
+            - task: AzurePowerShell@5
+              displayName: "Enable Resource Providers"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Enable-AzureResourceProviders.ps1
+
+            - task: AzurePowerShell@5
+              displayName: "Resource Group Deployment"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-ResourceGroup.ps1 -location $(location) -Environment $(environment) -subscriptionId $(subscriptionId) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy NSG and Rules"
+              name: DeployNSG
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |                
+                  .\pipeline-scripts\Deploy-NSG.ps1 -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -environment $(environment) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Networking"
+              name: DeployNetworking
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Networking.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Storage"
+              name: DeployStorage
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Storage.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy KeyVault"
+              name: DeployKeyVault
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-KeyVault.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Service Principal as KeyVault Administrator"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Get SPN object ID
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  # Check if SPN is already a KeyVault Administrator, if not assign permissions
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Generate Random Password for KeyVault"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Check if password exists in KeyVault, if not create it
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $secret = Get-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -ErrorAction SilentlyContinue
+                  if ($secret -eq $null) {
+                    $randompassword = (.\pipeline-scripts\Generate-RandomPassword.ps1)
+                    $securerandompassword = ConvertTo-SecureString -String $randompassword -AsPlainText -Force
+                    $secret = Set-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -SecretValue $securerandompassword
+
+                  }
+                  else {
+                    Write-Host "Secret already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Data Contributor Role on Storage Account for SPN"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  $storageAccount = Get-AzStorageAccount -ResourceGroupName $(resourceGroup) -Name $(storageaccountname)
+                  
+                  ## Check if Role Assignment Exists
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+
+                  ## If role doesn't exist, then create it, if not move on
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+    - deployment: CopyFiles
+      displayName: 'Copy Files to Storage Account'
+      dependsOn:
+        - DeployBaseInfrastructure
+        - GetEnvironmentParams_Dev
+      environment: 'development'
+      pool:
+        vmImage: windows-latest
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.version'] ]
+
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureFileCopy@6
+              displayName: 'Copy Files to Storage Account'
+              inputs:
+                SourcePath: '$(Build.SourcesDirectory)/upstream-releases/$(version)/build-scripts/build.ps1'
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                Destination: 'AzureBlob'
+                storage: $(storageaccountname)
+                ContainerName: 'config'
+                BlobPrefix: ''
+
+    - job: waitForValidation
+      displayName: Confirm vNet Peering in Place 
+      dependsOn:
+        - DeployBaseInfrastructure
+        - CopyFiles
+      pool: server    
+      timeoutInMinutes: 180
+      steps:   
+       - task: ManualValidation@0
+         timeoutInMinutes: 120
+         inputs:
+             notifyUsers: |
+               $(notification_email)
+             instructions: 'Please ensure the network peering is in place ready for the Agent Deployment'
+             onTimeout: 'reject'
+
+    - deployment: DeployDevelopmentAgents
+      displayName: 'Deploy Development Agents'
+      environment: 'development'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn: 
+       - waitForValidation
+       - GetEnvironmentParams_Dev
+       - DeployBaseInfrastructure
+       - CopyFiles
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.version'] ]
+
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Development VM Agents"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSS.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Development Agents Extension"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSSExtension.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Account to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzStorageAccountNetworkRuleSet -ResourceGroupName $(resourceGroup) -Name $(storageaccountname) -DefaultAction Deny
+
+            - task: AzurePowerShell@5
+              displayName: "Set KeyVault to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzKeyVaultNetworkRuleSet -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -DefaultAction Deny -Bypass AzureServices
+
+    - deployment: OutputDeployedResources
+      displayName: 'Output Deployed Resources'
+      environment: 'development'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn:
+        - DeployDevelopmentAgents
+        - GetEnvironmentParams_Dev        
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Dev.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzurePowerShell@5
+              displayName: "Output Deployed Resources Report as an artifact"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  $date = Get-Date -Format "yyyy-MM-dd-ss-mm-hh"
+                  .\pipeline-scripts\Get-Resources.ps1 -ResourceGroupName $(resourceGroup) | Export-Csv -Path $(Build.ArtifactStagingDirectory)/deployed-resources-$(environment)-$date.csv -NoTypeInformation
+                  
+
+            - task: PublishBuildArtifacts@1
+              displayName: 'Publish Artifact: Deployed Resources'
+              inputs:
+                PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+                ArtifactName: 'deployed-resources'
+                publishLocation: 'Container'
+
+
+  - stage: Deploy_Test
+    displayName: 'Deploy Test Environment'
+    jobs:
+    - job: GetEnvironmentParams_Test
+      displayName: 'Get Test Environment Parameters'
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+      - checkout: self
+        displayName: Checkout Repo
+
+      - pwsh: |
+          Get-Content -Path ${{ variables.tst_env }} -Encoding UTF8 | ForEach-Object {
+            $envVarName, $envVarValue = $_.split('=').trim()
+            Write-Host "Setting $envVarName=$envVarValue"
+            Write-Host "##vso[task.setvariable variable=$envVarName;isoutput=true]$envVarValue"
+          }
+        name: setVars
+        displayName: Import Test Environment Variables from File
+
+    - deployment: DeployBaseInfrastructure
+      displayName: 'Deploy Base Infrastructure'
+      environment: 'test'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn: GetEnvironmentParams_Test
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureCLI@2
+              displayName: 'Set Management Partner'
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                scriptType: 'bash'
+                scriptLocation: 'scriptPath'
+                scriptPath: 'pipeline-scripts/Set-AzManagementPartner.sh'
+
+            - task: AzurePowerShell@5
+              displayName: "Enable Resource Providers"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Enable-AzureResourceProviders.ps1
+
+            - task: AzurePowerShell@5
+              displayName: "Resource Group Deployment"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-ResourceGroup.ps1 -location $(location) -Environment $(environment) -subscriptionId $(subscriptionId) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy NSG and Rules"
+              name: DeployNSG
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |                
+                  .\pipeline-scripts\Deploy-NSG.ps1 -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -environment $(environment) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Networking"
+              name: DeployNetworking
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Networking.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Storage"
+              name: DeployStorage
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Storage.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy KeyVault"
+              name: DeployKeyVault
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-KeyVault.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Service Principal as KeyVault Administrator"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Get SPN object ID
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  # Check if SPN is already a KeyVault Administrator, if not assign permissions
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Generate Random Password for KeyVault"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Check if password exists in KeyVault, if not create it
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $secret = Get-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -ErrorAction SilentlyContinue
+                  if ($secret -eq $null) {
+                    $randompassword = (.\pipeline-scripts\Generate-RandomPassword.ps1)
+                    $securerandompassword = ConvertTo-SecureString -String $randompassword -AsPlainText -Force
+                    $secret = Set-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -SecretValue $securerandompassword
+
+                  }
+                  else {
+                    Write-Host "Secret already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Data Contributor Role on Storage Account for SPN"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  $storageAccount = Get-AzStorageAccount -ResourceGroupName $(resourceGroup) -Name $(storageaccountname)
+                  
+                  ## Check if Role Assignment Exists
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+
+                  ## If role doesn't exist, then create it, if not move on
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+    - deployment: CopyFiles
+      displayName: 'Copy Files to Storage Account'
+      dependsOn:
+        - DeployBaseInfrastructure
+        - GetEnvironmentParams_Test
+      environment: 'test'
+      pool:
+        vmImage: windows-latest
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.version'] ]
+
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureFileCopy@6
+              displayName: 'Copy Files to Storage Account'
+              inputs:
+                SourcePath: '$(Build.SourcesDirectory)/upstream-releases/$(version)/build-scripts/build.ps1'
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                Destination: 'AzureBlob'
+                storage: $(storageaccountname)
+                ContainerName: 'config'
+                BlobPrefix: ''
+
+    - job: waitForValidation
+      displayName: Confirm vNet Peering in Place
+      dependsOn:
+        - DeployBaseInfrastructure
+        - CopyFiles
+      pool: server
+      timeoutInMinutes: 180
+      steps:
+       - task: ManualValidation@0
+         timeoutInMinutes: 120
+         inputs:
+             notifyUsers: |
+               $(notification_email)
+             instructions: 'Please ensure the network peering is in place ready for the Agent Deployment'
+             onTimeout: 'reject'
+
+    - deployment: DeployTestAgents
+      displayName: 'Deploy Test Agents'
+      environment: 'test'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn:
+       - waitForValidation
+       - GetEnvironmentParams_Test
+       - DeployBaseInfrastructure
+       - CopyFiles
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.version'] ]
+
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Test VM Agents"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSS.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Test Agents Extension"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSSExtension.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Account to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzStorageAccountNetworkRuleSet -ResourceGroupName $(resourceGroup) -Name $(storageaccountname) -DefaultAction Deny
+
+            - task: AzurePowerShell@5
+              displayName: "Set KeyVault to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzKeyVaultNetworkRuleSet -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -DefaultAction Deny -Bypass AzureServices
+
+    - deployment: OutputDeployedResources
+      displayName: 'Output Deployed Resources'
+      environment: 'test'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn:
+        - DeployTestAgents
+        - GetEnvironmentParams_Test
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Test.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzurePowerShell@5
+              displayName: "Output Deployed Resources Report as an artifact"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  $date = Get-Date -Format "yyyy-MM-dd-ss-mm-hh"
+                  .\pipeline-scripts\Get-Resources.ps1 -ResourceGroupName $(resourceGroup) | Export-Csv -Path $(Build.ArtifactStagingDirectory)/deployed-resources-$(environment)-$date.csv -NoTypeInformation
+                  
+
+            - task: PublishBuildArtifacts@1
+              displayName: 'Publish Artifact: Deployed Resources'
+              inputs:
+                PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+                ArtifactName: 'deployed-resources'
+                publishLocation: 'Container'
+
+  - stage: Deploy_Production
+
+    displayName: 'Deploy Production Environment'
+    jobs:
+    - job: GetEnvironmentParams_Prod
+      displayName: 'Get Production Environment Parameters'
+      pool:
+        vmImage: ubuntu-latest
+      steps:
+      - checkout: self
+        displayName: Checkout Repo
+
+      - pwsh: |
+          Get-Content -Path ${{ variables.prd_env }} -Encoding UTF8 | ForEach-Object {
+            $envVarName, $envVarValue = $_.split('=').trim()
+            Write-Host "Setting $envVarName=$envVarValue"
+            Write-Host "##vso[task.setvariable variable=$envVarName;isoutput=true]$envVarValue"
+          }
+        name: setVars
+        displayName: Import Production Environment Variables from File
+
+    - deployment: DeployBaseInfrastructure
+      displayName: 'Deploy Base Infrastructure'
+      environment: 'production'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn: GetEnvironmentParams_Prod
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureCLI@2
+              displayName: 'Set Management Partner'
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                scriptType: 'bash'
+                scriptLocation: 'scriptPath'
+                scriptPath: 'pipeline-scripts/Set-AzManagementPartner.sh'
+
+            - task: AzurePowerShell@5
+              displayName: "Enable Resource Providers"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Enable-AzureResourceProviders.ps1
+
+            - task: AzurePowerShell@5
+              displayName: "Resource Group Deployment"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-ResourceGroup.ps1 -location $(location) -Environment $(environment) -subscriptionId $(subscriptionId) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy NSG and Rules"
+              name: DeployNSG
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |                
+                  .\pipeline-scripts\Deploy-NSG.ps1 -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -environment $(environment) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Networking"
+              name: DeployNetworking
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Networking.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Storage"
+              name: DeployStorage
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-Storage.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy KeyVault"
+              name: DeployKeyVault
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-KeyVault.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Service Principal as KeyVault Administrator"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Get SPN object ID
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  # Check if SPN is already a KeyVault Administrator, if not assign permissions
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Key Vault Administrator" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.KeyVault/vaults" -ResourceName $keyVault.VaultName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Generate Random Password for KeyVault"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  # Check if password exists in KeyVault, if not create it
+                  $keyVault = Get-AzKeyVault -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01'
+                  $secret = Get-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -ErrorAction SilentlyContinue
+                  if ($secret -eq $null) {
+                    $randompassword = (.\pipeline-scripts\Generate-RandomPassword.ps1)
+                    $securerandompassword = ConvertTo-SecureString -String $randompassword -AsPlainText -Force
+                    $secret = Set-AzKeyVaultSecret -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -Name '$(environment)-vmss-password' -SecretValue $securerandompassword
+
+                  }
+                  else {
+                    Write-Host "Secret already exists"
+                  }
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Data Contributor Role on Storage Account for SPN"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                pwsh: true
+                ScriptType: "InlineScript"
+                Inline: |
+                  $ctx = (Get-AzContext).Account.Id
+                  $objectId = (Get-AzADServicePrincipal -ApplicationId $ctx).Id
+
+                  $storageAccount = Get-AzStorageAccount -ResourceGroupName $(resourceGroup) -Name $(storageaccountname)
+                  
+                  ## Check if Role Assignment Exists
+                  $roleAssignment = Get-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+
+                  ## If role doesn't exist, then create it, if not move on
+                  if ($roleAssignment -eq $null) {
+                    New-AzRoleAssignment -ObjectId $objectId -RoleDefinitionName "Storage Blob Data Contributor" -ResourceGroupName $(resourceGroup) -ResourceType "Microsoft.Storage/storageAccounts" -ResourceName $storageAccount.StorageAccountName
+                  }
+                  else {
+                    Write-Host "Role Assignment already exists"
+                  }
+
+    - deployment: CopyFiles
+      displayName: 'Copy Files to Storage Account'
+      dependsOn:
+        - DeployBaseInfrastructure
+        - GetEnvironmentParams_Prod
+      environment: 'production'
+      pool:
+        vmImage: windows-latest
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.version'] ]
+
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzureFileCopy@6
+              displayName: 'Copy Files to Storage Account'
+              inputs:
+                SourcePath: '$(Build.SourcesDirectory)/upstream-releases/$(version)/build-scripts/build.ps1'
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                Destination: 'AzureBlob'
+                storage: $(storageaccountname)
+                ContainerName: 'config'
+                BlobPrefix: ''
+
+    - job: waitForValidation
+      displayName: Confirm vNet Peering in Place
+      dependsOn:
+        - DeployBaseInfrastructure
+        - CopyFiles
+      pool: server
+      timeoutInMinutes: 180
+      steps:
+       - task: ManualValidation@0
+         timeoutInMinutes: 120
+         inputs:
+             notifyUsers: |
+               $(notification_email)
+             instructions: 'Please ensure the network peering is in place ready for the Agent Deployment'
+             onTimeout: 'reject'
+
+    - deployment: DeployProductionAgents
+      displayName: 'Deploy Production Agents'
+      environment: 'production'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn:
+       - waitForValidation
+       - GetEnvironmentParams_Prod
+       - DeployBaseInfrastructure
+       - CopyFiles
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.version'] ]
+
+
+      strategy:
+
+
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Production VM Agents"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSS.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Deploy Production Agents Extension"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  .\pipeline-scripts\Deploy-VMSSExtension.ps1 -Environment $(environment) -subscriptionId $(subscriptionId) -resourceGroupName $(resourceGroup) -companyCode $(companycode) -projectCode $(projectcode) -version $(version)
+
+            - task: AzurePowerShell@5
+              displayName: "Set Storage Account to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzStorageAccountNetworkRuleSet -ResourceGroupName $(resourceGroup) -Name $(storageaccountname) -DefaultAction Deny
+
+            - task: AzurePowerShell@5
+              displayName: "Set KeyVault to disallow Public"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  Update-AzKeyVaultNetworkRuleSet -ResourceGroupName $(resourceGroup) -VaultName 'kv-$(companycode)-$(environment)-$(projectcode)-01' -DefaultAction Deny -Bypass AzureServices
+
+    - deployment: OutputDeployedResources
+      displayName: 'Output Deployed Resources'
+      environment: 'production'
+      pool:
+        vmImage: ubuntu-latest
+      dependsOn:
+        - DeployProductionAgents
+        - GetEnvironmentParams_Prod
+      variables:
+        - name: location
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.location'] ]
+        - name: environment
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.environment'] ]
+        - name: resourceGroup
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.resourcegroupname'] ]
+        - name: subscriptionId
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.subscriptionId'] ]
+        - name: storageaccountname
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.storage_account_name'] ]
+        - name: companycode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.companycode'] ]
+        - name: projectcode
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.projectcode'] ]
+        - name: version
+          value: $[ dependencies.GetEnvironmentParams_Prod.outputs['setVars.version'] ]
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+              displayName: Checkout Repo
+            - task: AzurePowerShell@5
+              displayName: "Output Deployed Resources Report as an artifact"
+              inputs:
+                azureSubscription: ${{ variables.SERVICE_CONNECTION_NAME }}
+                azurePowerShellVersion: "LatestVersion"
+                ScriptType: "InlineScript"
+                Inline: |
+                  $date = Get-Date -Format "yyyy-MM-dd-ss-mm-hh"
+                  .\pipeline-scripts\Get-Resources.ps1 -ResourceGroupName $(resourceGroup) | Export-Csv -Path $(Build.ArtifactStagingDirectory)/deployed-resources-$(environment)-$date.csv -NoTypeInformation
+                  
+
+            - task: PublishBuildArtifacts@1
+              displayName: 'Publish Artifact: Deployed Resources'
+              inputs:
+                PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+                ArtifactName: 'deployed-resources'
+                publishLocation: 'Container'

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "uksouth"
+    },
+    "vmSku": {
+      "value": "Standard_B8ms"
+    },
+    "instanceCount": {
+      "value": 1
+    },
+    "nameSubfix": {
+      "value": ""
+    },
+    "vmssName": {
+      "value": ""
+    },
+    "vNetName": {
+      "value": ""
+    },
+    "storageAccountName": {
+      "value": ""
+    },
+    "osType": {
+      "value": "Windows"
+    },
+    "adminUsername": {
+      "value": ""
+    },
+    "adminPassword": {
+      "value": "#{vmssadminpassword}#"
+    },
+      "parTags": {
+      "value": {
+        "Environment": "",
+        "CostCentre": "",
+        "ServiceName": "",
+        "LocationID": "",
+        "ForceID": "",
+        "Owner": "",
+        "DoNotDelete": "",
+        "ReadOnly": ""
+      }
+    },
+    "parResourceLockConfig": {
+      "value": {
+        "kind": "",
+        "notes": "This lock was created by the Bicep VMSS Module"
+      }
+    }
+  }
+}

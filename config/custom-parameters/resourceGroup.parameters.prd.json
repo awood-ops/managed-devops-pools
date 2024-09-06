@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "parLocation": {
+      "value": "uksouth"
+    },
+    "parResourceGroupName": {
+      "value": ""
+    },
+    "parTags": {
+      "value": {
+        "Environment": "",
+        "CostCentre": "",
+        "ServiceName": "",
+        "LocationID": "",
+        "ForceID": "",
+        "Owner": "",
+        "DoNotDelete": "",
+        "ReadOnly": ""
+      }
+    },
+    "parResourceLockConfig": {
+      "value": {
+        "kind": "",
+        "notes": "This lock was created by the Bicep resourceGroup Module"
+      }
+    }
+  }
+}

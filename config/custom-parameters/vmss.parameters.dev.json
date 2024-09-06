@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": {
+      "value": "uksouth"
+    },
+    "vmSku": {
+      "value": "Standard_B8ms"
+    },
+    "instanceCount": {
+      "value": 1
+    },
+    "nameSubfix": {
+      "value": "vmamwdev"
+    },
+    "vmssName": {
+      "value": "vmss-amw-dev-app-01"
+    },
+    "vNetName": {
+      "value": "vnet-amw-dev-app-01"
+    },
+    "storageAccountName": {
+      "value": "stamwdevapp01"
+    },
+    "osType": {
+      "value": "Windows"
+    },
+    "adminUsername": {
+      "value": "amw-dev-admin"
+    },
+    "adminPassword": {
+      "value": "#{devvmssadminpassword}#"
+    },
+      "parTags": {
+      "value": {
+        "Environment": "",
+        "CostCentre": "",
+        "ServiceName": "",
+        "LocationID": "",
+        "ForceID": "",
+        "Owner": "",
+        "DoNotDelete": "",
+        "ReadOnly": ""
+      }
+    },
+    "parResourceLockConfig": {
+      "value": {
+        "kind": "CanNotDelete",
+        "notes": "This lock was created by the Bicep VMSS Module"
+      }
+    }
+  }
+}

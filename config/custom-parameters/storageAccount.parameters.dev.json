@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "parLocation": {
+      "value": "uksouth"
+    },
+    "parStorageAccountName": {
+      "value": "stamwdevapp01"
+    },
+    "parStorageAccountType": {
+      "value": "Standard_LRS"
+    },
+    "parTags": {
+      "value": {
+        "Environment": "",
+        "CostCentre": "",
+        "ServiceName": "",
+        "LocationID": "",
+        "ForceID": "",
+        "Owner": "",
+        "DoNotDelete": "",
+        "ReadOnly": ""
+      }
+    },
+    "parResourceLockConfig": {
+      "value": {
+        "kind": "CanNotDelete",
+        "notes": "This lock was created by the Bicep Storage Account Module"
+      }
+    }
+  }
+}
