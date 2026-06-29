@@ -1,0 +1,52 @@
+name: Validate Managed DevOps Pool
+
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: Resource group name
+        required: true
+      dev_center_name:
+        description: Dev Center name
+        default: dc-devops-prd
+        required: false
+      dev_center_project_name:
+        description: Dev Center Project name
+        default: dc-project-devops-prd
+        required: false
+      pool_name:
+        description: Pool name
+        default: mdp-windows-prd
+        required: false
+      organization_url:
+        description: Expected ADO organisation URL (optional)
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install devcenter CLI extension
+        run: az extension add --name devcenter --yes
+
+      - name: Run validation
+        shell: pwsh
+        run: |
+          .\scripts\Test-ManagedDevOpsPool.ps1 `
+            -ResourceGroupName '${{ inputs.resource_group }}' `
+            -DevCenterName '${{ inputs.dev_center_name }}' `
+            -DevCenterProjectName '${{ inputs.dev_center_project_name }}' `
+            -PoolName '${{ inputs.pool_name }}' `
+            -OrganizationUrl '${{ inputs.organization_url }}'
