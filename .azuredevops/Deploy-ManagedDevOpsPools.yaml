@@ -1,0 +1,75 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - bicep/**
+
+pr: none
+
+parameters:
+  - name: environment
+    displayName: Target environment
+    type: string
+    default: prd
+    values:
+      - prd
+      - dev
+
+variables:
+  serviceConnection: 'Azure-Service-Connection'
+  resourceGroup: 'rg-devops-agents-$(parameters.environment)'
+  location: 'uksouth'
+  parametersFile: 'bicep/main.bicepparam'
+
+stages:
+  - stage: Validate
+    displayName: Validate Bicep
+    jobs:
+      - job: ValidateBicep
+        displayName: Bicep preflight validation
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: AzureCLI@2
+            displayName: az deployment group validate
+            inputs:
+              azureSubscription: $(serviceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az deployment group validate \
+                  --resource-group $(resourceGroup) \
+                  --template-file bicep/main.bicep \
+                  --parameters $(parametersFile)
+
+  - stage: Deploy
+    displayName: Deploy Managed DevOps Pool
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - deployment: DeployPool
+        displayName: Deploy pool to $(resourceGroup)
+        environment: ${{ parameters.environment }}
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureCLI@2
+                  displayName: az deployment group create
+                  inputs:
+                    azureSubscription: $(serviceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      az deployment group create \
+                        --resource-group $(resourceGroup) \
+                        --template-file bicep/main.bicep \
+                        --parameters $(parametersFile) \
+                        --name "mdp-$(Build.BuildNumber)" \
+                        --mode Incremental
