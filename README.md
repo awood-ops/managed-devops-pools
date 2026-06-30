@@ -1,76 +1,56 @@
-# Azure Managed DevOps Pools
+# Managed DevOps Pools
 
-Bicep templates and Azure DevOps pipelines to deploy and manage [Managed DevOps Pools](https://learn.microsoft.com/en-us/azure/devops/managed-devops-pools/overview) — Microsoft's replacement for VMSS-based scale set agents.
-
-Managed DevOps Pools provisions ephemeral Azure VMs on-demand when pipeline jobs are queued, and deallocates them when jobs complete. No agent infrastructure to maintain.
+[Azure Managed DevOps Pools](https://learn.microsoft.com/en-us/azure/devops/managed-devops-pools/overview) — Bicep (AVM) templates and Azure DevOps pipelines for on-demand ephemeral build agents.
 
 ## Architecture
 
 ```mermaid
-graph LR
-    subgraph ADO["Azure DevOps"]
-        Pipeline["Pipeline Job\n(queued)"]
-        Pool["Agent Pool\nmdp-windows-prd"]
+graph TB
+    ADO(["🔧 Azure DevOps\nPipeline Job"])
+
+    subgraph Azure["Azure Subscription — rg-devops-agents-prd"]
+        DC["Dev Center\ndc-devops-prd"]
+        Proj["DC Project\ndc-project-devops-prd"]
+        Pool["Managed DevOps Pool\nmdp-windows-prd"]
+        Agents["Ephemeral Agents\n(Windows Server 2022)"]
     end
 
-    subgraph Azure["Azure Subscription"]
-        subgraph DC["Dev Center"]
-            DevCenter["Dev Center"]
-            Project["Dev Center Project"]
-        end
-        subgraph MDP["Managed DevOps Pool"]
-            PoolRes["Pool Resource\nmax 4 agents"]
-            VM["Ephemeral VM\nStandard_D4s_v5\nWindows 2022"]
-        end
-    end
-
-    Pipeline -->|"job queued"| PoolRes
-    PoolRes -->|"provision"| VM
-    VM -->|"registers as agent"| Pool
-    Pool -->|"runs job"| Pipeline
-    VM -->|"job complete → deallocate"| PoolRes
-    DevCenter --> Project --> PoolRes
+    ADO -->|triggers job| Pool
+    Pool -->|provisions| Agents
+    Agents -->|registered in| ADO
+    Proj --> Pool
+    DC --> Proj
 ```
 
-## Agent lifecycle
-
-```mermaid
-sequenceDiagram
-    participant P as Pipeline
-    participant MDP as Managed DevOps Pool
-    participant VM as Ephemeral VM
-
-    P->>MDP: Job queued
-    MDP->>VM: Provision VM (cold start ~2 min)
-    VM->>MDP: Register as agent
-    MDP->>P: Agent available
-    P->>VM: Run job
-    VM->>P: Job complete
-    VM->>MDP: Deregister
-    MDP->>VM: Deallocate
-    Note over VM: No charge while idle
-```
+Agents are **stateless** — a fresh VM is provisioned per job and deallocated when complete. No persistent agent infrastructure; cost is purely on-demand.
 
 ## Structure
 
 ```
 .azuredevops/
-├── Deploy-ManagedDevOpsPools.yaml   # CD pipeline — deploys on push to main
-└── PR-Validation.yaml               # CI pipeline — validates Bicep on PRs
+└── Deploy-ManagedDevOpsPools.yaml   # CD pipeline — deploys on push to main
 
 .github/workflows/
-└── check-avm-versions.yml           # Weekly AVM version check — auto-raises PRs
+├── mdp.module.yml                   # e2e test trigger (PSRule + defaults scenario)
+└── check-avm-versions.yml           # Weekly AVM version check
 
 bicep/
-├── main.bicep                       # Entry point — calls AVM modules
-└── main.bicepparam                  # Parameters (copy and customise per environment)
+├── main.bicep                       # Dev Center + DC Project + Managed DevOps Pool
+└── main.bicepparam                  # Parameters (customise per environment)
 
 docs/
-└── Getting-Started.md               # Prerequisites and first-time setup
+└── Getting-Started.md               # Prerequisites and initial setup
 
 scripts/
-├── Get-PoolAgentStatus.ps1          # Check active agents on a pool
+├── Get-CostEstimate.ps1             # Retail Prices API cost estimate — used by e2e workflow
+├── Get-PoolAgentStatus.ps1          # Show current agent status in the pool
+├── Test-ManagedDevOpsPool.ps1       # Validate a deployment is healthy
 └── Update-AvmVersions.py            # AVM version checker (used by GitHub Actions)
+
+tests/e2e/
+└── defaults/
+    ├── main.test.bicep              # Subscription-scoped test bicep — DC + project + 1-agent pool
+    └── mdp.defaults.test.ps1        # Pester v5 assertions for defaults scenario
 
 bicepconfig.json                     # AVM public registry alias
 ```
@@ -87,34 +67,86 @@ Check latest versions: [AVM Bicep Resource Modules](https://azure.github.io/Azur
 
 ## Quick start
 
-See [docs/Getting-Started.md](docs/Getting-Started.md) for prerequisites and service connection setup.
+See [docs/Getting-Started.md](docs/Getting-Started.md) for prerequisites (service principal, ADO permissions).
 
 ```bash
-# Restore AVM modules locally
 az bicep restore --file bicep/main.bicep
 
-# Validate
-az deployment group validate \
-  --resource-group rg-devops-agents-prd \
-  --template-file bicep/main.bicep \
-  --parameters bicep/main.bicepparam
-
-# Deploy
 az deployment group create \
   --resource-group rg-devops-agents-prd \
   --template-file bicep/main.bicep \
-  --parameters bicep/main.bicepparam
+  --parameters bicep/main.bicepparam \
+  --parameters organizationUrl='https://dev.azure.com/YOUR-ORG'
 ```
 
-## Use the pool in a pipeline
+## CI / Testing
 
-Reference the pool by name in your Azure DevOps pipeline YAML:
+Testing follows the [Azure Verified Modules e2e pattern](https://azure.github.io/Azure-Verified-Modules/contributing/bicep/bicep-contribution-flow/validate-bicep-module-locally/) via the shared [`awood-ops/.github`](https://github.com/awood-ops/.github) reusable workflow.
 
-```yaml
-pool:
-  name: mdp-windows-prd
+### Pipeline overview
+
 ```
+On push / PR (bicep/** or tests/**)
+│
+├── PSRule for Azure    Static analysis — compiles Bicep → ARM, runs best-practice rules.
+│                       No Azure credentials needed. Blocks e2e if it fails.
+│
+└── e2e / defaults      Deploys Dev Center + Project + 1-agent pool; runs Pester assertions;
+                        deletes RG on completion.
+```
+
+The e2e lifecycle is managed by [`e2e.reusable.yml`](https://github.com/awood-ops/.github/blob/main/.github/workflows/e2e.reusable.yml):
+
+```
+OIDC login → what-if preflight → deploy → Pester assertions → [AzQR] → [cost estimate] → cleanup
+```
+
+### Test scenario
+
+| Scenario | VM size | Max concurrency | Approx. duration |
+|---|---|---|---|
+| `defaults` | Standard_D2s_v5 | 1 | ~15–20 min (Dev Center provisioning) |
+
+> Dev Center provisioning takes significantly longer than most Azure resources. The e2e run is triggered on PRs but is not a merge gate — failing runs should be investigated before merging.
+
+### Optional analysis (workflow_dispatch only)
+
+When triggering via **Actions → MDP Module — e2e Tests → Run workflow**:
+
+| Input | Description | Artifact |
+|---|---|---|
+| `run_azqr` | [AzQR](https://github.com/Azure/azqr) best-practice scan | `azqr-defaults/` |
+| `run_cost_estimate` | Per-resource monthly estimate via [Azure Retail Prices API](https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices) | `cost-estimate-defaults/` |
+
+### Running tests locally
+
+```bash
+# Deploy the defaults scenario
+az deployment sub create \
+  --location uksouth \
+  --template-file tests/e2e/defaults/main.test.bicep \
+  --parameters namePrefix=mdplocal organizationUrl='https://dev.azure.com/YOUR-ORG'
+
+# Run Pester assertions (Pester v5 + PowerShell 7 required)
+$env:TEST_RG          = 'dep-mdplocal-mdp'
+$env:TEST_NAME_PREFIX = 'mdplocal'
+Invoke-Pester ./tests/e2e/defaults -Output Detailed
+
+# Cleanup
+az group delete --name dep-mdplocal-mdp --yes
+```
+
+### Required secrets
+
+| Secret | Description |
+|---|---|
+| `AZURE_CLIENT_ID` | App registration client ID for OIDC federation |
+| `AZURE_TENANT_ID` | Entra tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Target subscription for test deployments |
+| `AZURE_DEVOPS_ORG_URL` | Azure DevOps org URL (e.g. `https://dev.azure.com/my-org`) |
+
+The OIDC service principal requires `Contributor` on the test subscription and `DevOps Infrastructure Pool Admin` in the Azure DevOps organisation.
 
 ## Contributing
 
-Changes go through a pull request — the PR validation pipeline runs `az bicep build` and a preflight `validate` against the target resource group before merge. AVM module versions are checked weekly and updated automatically via pull request.
+Changes go through a pull request. PSRule for Azure runs on every PR as a pre-gate. AVM module versions are checked weekly and updated automatically via pull request.
