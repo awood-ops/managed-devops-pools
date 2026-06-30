@@ -1,4 +1,4 @@
-name: MDP Module — e2e Tests
+name: MDP Module -- e2e Tests
 
 on:
   push:
@@ -22,13 +22,18 @@ on:
         type: boolean
         default: false
 
+# Required so reusable workflow can use OIDC (azure/login@v2)
+permissions:
+  id-token: write
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
 
-  # ── Static analysis — no Azure credentials needed ──────────────────────────
+  # Static analysis -- no Azure credentials needed
   psrule:
     name: PSRule for Azure
     runs-on: ubuntu-latest
@@ -53,7 +58,7 @@ jobs:
             Write-Error "PSRule found $($results.Count) issue(s)"
           }
 
-  # ── e2e: defaults — manual dispatch only (requires AZURE_DEVOPS_ORG_URL secret) ─
+  # e2e: defaults -- manual dispatch only (requires AZURE_DEVOPS_ORG_URL secret)
   defaults:
     name: e2e / defaults
     needs: psrule
