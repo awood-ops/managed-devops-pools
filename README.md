@@ -42,7 +42,6 @@ docs/
 └── Getting-Started.md               # Prerequisites and initial setup
 
 scripts/
-├── Get-CostEstimate.ps1             # Retail Prices API cost estimate — used by e2e workflow
 ├── Get-PoolAgentStatus.ps1          # Show current agent status in the pool
 ├── Test-ManagedDevOpsPool.ps1       # Validate a deployment is healthy
 └── Update-AvmVersions.py            # AVM version checker (used by GitHub Actions)
