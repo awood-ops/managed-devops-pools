@@ -6,13 +6,11 @@ on:
     paths:
       - 'bicep/**'
       - 'tests/**'
-      - 'scripts/**'
       - '.github/workflows/mdp.module.yml'
   pull_request:
     paths:
       - 'bicep/**'
       - 'tests/**'
-      - 'scripts/**'
   workflow_dispatch:
     inputs:
       run_azqr:
@@ -55,10 +53,11 @@ jobs:
             Write-Error "PSRule found $($results.Count) issue(s)"
           }
 
-  # ── e2e: defaults scenario ─────────────────────────────────────────────────
+  # ── e2e: defaults — manual dispatch only (requires AZURE_DEVOPS_ORG_URL secret) ─
   defaults:
     name: e2e / defaults
     needs: psrule
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     uses: awood-ops/platform-workflows/.github/workflows/e2e.reusable.yml@main
     with:
       scenario: defaults
