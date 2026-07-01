@@ -63,14 +63,14 @@ module devCenterProject 'br/public:avm/res/dev-center/project:0.1.2' = {
   params: {
     name: devCenterProjectName
     location: location
-    devCenterId: devCenter.id
+    devCenterResourceId: devCenter.id
     tags: tags
   }
 }
 
 // ── Managed DevOps Pool ──────────────────────────────────────────────────────
 
-module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.2.0' = {
+module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.7.1' = {
   name: 'managedDevOpsPool'
   params: {
     name: poolName
