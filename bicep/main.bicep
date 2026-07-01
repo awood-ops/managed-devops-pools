@@ -51,13 +51,11 @@ param tags object = {
 
 // ── Dev Center ───────────────────────────────────────────────────────────────
 
-module devCenter 'br/public:avm/res/dev-center/dev-center:0.1.4' = {
-  name: 'devCenter'
-  params: {
-    name: devCenterName
-    location: location
-    tags: tags
-  }
+// avm/res/dev-center/dev-center is not published to MCR -- using native resource
+resource devCenter 'Microsoft.DevCenter/devCenters@2024-02-01' = {
+  name: devCenterName
+  location: location
+  tags: tags
 }
 
 module devCenterProject 'br/public:avm/res/dev-center/project:0.1.2' = {
@@ -65,7 +63,7 @@ module devCenterProject 'br/public:avm/res/dev-center/project:0.1.2' = {
   params: {
     name: devCenterProjectName
     location: location
-    devCenterId: devCenter.outputs.resourceId
+    devCenterId: devCenter.id
     tags: tags
   }
 }
@@ -109,7 +107,7 @@ module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.2.0' =
 
 // ── Outputs ──────────────────────────────────────────────────────────────────
 
-output devCenterId string = devCenter.outputs.resourceId
+output devCenterId string = devCenter.id
 output devCenterProjectId string = devCenterProject.outputs.resourceId
 output poolId string = managedDevOpsPool.outputs.resourceId
 output poolName string = managedDevOpsPool.outputs.name
