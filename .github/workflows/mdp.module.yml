@@ -1,0 +1,73 @@
+name: MDP Module -- e2e Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bicep/**'
+      - 'tests/**'
+      - '.github/workflows/mdp.module.yml'
+  pull_request:
+    paths:
+      - 'bicep/**'
+      - 'tests/**'
+  workflow_dispatch:
+    inputs:
+      run_azqr:
+        description: 'Run AzQR best-practice scan (uploads report artifact)'
+        type: boolean
+        default: false
+      run_cost_estimate:
+        description: 'Run cost estimate (uploads pricing report artifact)'
+        type: boolean
+        default: false
+
+# Required so reusable workflow can use OIDC (azure/login@v2)
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # Static analysis -- no Azure credentials needed
+  psrule:
+    name: PSRule for Azure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Bicep CLI
+        run: |
+          curl -Lo /tmp/bicep-cli https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x /tmp/bicep-cli && sudo mv /tmp/bicep-cli /usr/local/bin/bicep
+
+      - name: Compile Bicep to ARM
+        run: |
+          find bicep -name '*.bicep' | xargs -I{} bicep restore {}
+          bicep build bicep/main.bicep --outdir /tmp/arm
+
+      - name: Run PSRule for Azure
+        shell: pwsh
+        run: |
+          Install-Module PSRule.Rules.Azure -Force -Scope CurrentUser
+          $results = Invoke-PSRule -InputPath /tmp/arm -Module PSRule.Rules.Azure -Outcome Fail -As Summary
+          if ($results) {
+            $results | Format-Table -AutoSize
+            Write-Error "PSRule found $($results.Count) issue(s)"
+          }
+
+  # e2e: defaults -- manual dispatch only (requires AZURE_DEVOPS_ORG_URL secret)
+  defaults:
+    name: e2e / defaults
+    needs: psrule
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    uses: awood-ops/platform-workflows/.github/workflows/e2e.reusable.yml@main
+    with:
+      scenario: defaults
+      run_azqr: ${{ inputs.run_azqr || false }}
+      run_cost_estimate: ${{ inputs.run_cost_estimate || false }}
+    secrets: inherit
