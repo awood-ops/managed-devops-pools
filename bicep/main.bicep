@@ -72,11 +72,13 @@ module devCenterProject 'br/public:avm/res/dev-center/project:0.1.2' = {
 
 // ── Managed DevOps Pool ──────────────────────────────────────────────────────
 
-module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.7.1' = {
-  name: 'managedDevOpsPool'
-  params: {
-    name: poolName
-    location: location
+// avm/res/dev-ops-infrastructure/pool abstracts away organizationProfile/agentProfile/fabricProfile
+// Use native resource to preserve full MDOP configuration
+resource managedDevOpsPool 'Microsoft.DevOpsInfrastructure/pools@2024-10-19' = {
+  name: poolName
+  location: location
+  tags: tags
+  properties: {
     devCenterProjectResourceId: devCenterProject.outputs.resourceId
     maximumConcurrency: maximumConcurrency
     agentProfile: agentLifecycle == 'Stateless'
@@ -103,7 +105,6 @@ module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.7.1' =
       ]
       storageProfile: { osDiskStorageAccountType: 'Standard' }
     }
-    tags: tags
   }
 }
 
@@ -111,5 +112,5 @@ module managedDevOpsPool 'br/public:avm/res/dev-ops-infrastructure/pool:0.7.1' =
 
 output devCenterId string = devCenter.outputs.resourceId
 output devCenterProjectId string = devCenterProject.outputs.resourceId
-output poolId string = managedDevOpsPool.outputs.resourceId
-output poolName string = managedDevOpsPool.outputs.name
+output poolId string = managedDevOpsPool.id
+output poolName string = managedDevOpsPool.name
