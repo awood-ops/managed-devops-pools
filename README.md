@@ -43,6 +43,7 @@ docs/
 
 scripts/
 ├── Get-PoolAgentStatus.ps1          # Show current agent status in the pool
+├── Grant-WorkloadIdentityAccess.ps1 # Grant a deploy identity the RBAC + ADO permissions it needs
 ├── Test-ManagedDevOpsPool.ps1       # Validate a deployment is healthy
 └── Update-AvmVersions.py            # AVM version checker (used by GitHub Actions)
 
